@@ -8,6 +8,8 @@
 #include<sys/socket.h>
 #include <unistd.h>
 #include <iostream>
+#include <list>
+#include <algorithm>
  
 const unsigned int BUFLEN =  1028;  //Max length of buffer
 const unsigned int PORT = 8888;   //The port on which to listen for incoming data
@@ -45,9 +47,8 @@ int main(void)
         die("bind");
     }
      
-	printf("Waiting for data...");
-	fflush(stdout);
 	uint32_t last_counter = 0;
+	std::list<uint32_t> absent;
     while(1)
 	{
 
@@ -57,19 +58,37 @@ int main(void)
 	  }
 	  uint32_t *packet = (uint32_t*)buf;
 	  uint32_t counter = ntohl(*packet);
+	  //std::cout<<"Get: "<<counter<<std::endl;
 
-	  if(counter - last_counter > 1)
+	  auto res = std::find(absent.begin(), absent.end(), counter);
+	  if(res == absent.end())
 	  {
-		if (sendto(s,  packet, sizeof(*packet), 0, (struct sockaddr*) &si_other, slen) == -1)
+		if(counter - last_counter > 1)
+		{
+		  for(uint32_t i = last_counter + 1; i < counter; i++)
+		  {
+			//std::cout<<"Skipped: "<<i<<std::endl;
+			absent.push_back(i);
+		  } 
+		}
+		last_counter = counter;
+	  }
+	  else
+	  {
+		absent.erase(res);
+	  }
+
+	  if (!absent.empty())
+	  {
+		uint32_t required = ntohl(absent.front());
+		absent.pop_front();
+		std::cout<<"Rerquired: "<<required<<std::endl;
+		if (sendto(s,  &required, sizeof(required), 0, (struct sockaddr*) &si_other, slen) == -1)
 		{
 		  die("sendto()");
 		}
 	  }
-	  last_counter = counter;
-	  //std::cout<<"Counter: "<<counter<<" "<<last_counter<<std::endl;
-
 	}
-
 	close(s);
 	return 0;
 }

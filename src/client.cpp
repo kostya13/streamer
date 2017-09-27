@@ -6,16 +6,54 @@
 #include <fstream>
 #include <cstdio>
 #include <cstring>
+#include <random>
 #include<string.h> //memset
 #include<stdlib.h> //exit(0);
 #include<arpa/inet.h>
 #include<sys/socket.h>
 #include <unistd.h>
+#include <list>
+#include <mutex>
+#include <map>
+#include <vector>
+#include <array>
+#include <algorithm>
 
  
 const char* SERVER = "127.0.0.1";
 const unsigned int BUFLEN =  1028;  //Max length of buffer
 const unsigned int PORT = 8888;   //The port on which to listen for incoming data
+const unsigned int CACHE_SIZE = 1024;  
+
+
+class Container 
+{
+     std::mutex _lock;
+     std::list<uint32_t> _elements;
+public:
+     void push(uint32_t element)
+	 {
+	   _lock.lock();
+	   _elements.push_back(element);
+	   _lock.unlock();
+	 }
+
+     uint32_t pop()
+	 {
+	   uint32_t e;
+	   _lock.lock();
+	   e = _elements.front();
+	   _elements.pop_front();
+	   _lock.unlock();
+	   return e;
+	 }
+
+	 bool empty()
+	 {
+	   return _elements.empty();
+	 }
+
+};
 
 
 void die(const char *s)
@@ -41,6 +79,64 @@ int prepare_socket()
 	return s;
 }
 
+
+class SkipCheck
+{
+  std::random_device random_device; // Источник энтропии.
+  std::mt19937 generator; // Генератор случайных чисел.
+  std::uniform_int_distribution<> distribution; // Равномерное распределение [10, 20]
+
+  public:
+	SkipCheck(): 
+	  generator(random_device()), 
+	  distribution(0, 10000) {};
+
+	bool skip()
+	{
+	  return (distribution(generator) == 500);
+	}
+};
+
+
+class Cache
+{
+  public:
+	Cache()
+	{
+	  index.fill(0);
+	}
+  typedef  char buf_item[BUFLEN];
+	std::array<uint32_t, CACHE_SIZE> index;
+	std::array<buf_item, CACHE_SIZE> elements;
+	int position = 0;
+	void add(uint32_t num, char* data)
+	{
+	  index[position] = num;
+	  std::memcpy(&elements[position], data, sizeof(buf_item));
+	  position++;
+	  if( position == CACHE_SIZE)
+	  {
+		position = 0;
+	  }
+	}
+
+	void get(uint32_t num, char* data)
+	{
+	  auto res = std::find(index.cbegin(), index.cend(), num);
+	  if(res == index.cend())
+	  {
+		std::memset(data, 0, sizeof(buf_item));
+		std::memcpy(data, &num, sizeof(num));
+	  }
+	  else
+	  {
+		std::memcpy(data, &elements[*res], sizeof(buf_item));
+	  }
+	}
+};
+
+Container skipped;
+
 void send_stream(int s)
 {
   struct sockaddr_in si_other;
@@ -49,6 +145,8 @@ void send_stream(int s)
   char filebuf[BUFLEN - 4];
   uint32_t counter = 0;
   uint32_t last_counter = 0;
+  SkipCheck checker;
+  Cache cache;
 
   memset((char *) &si_other, 0, sizeof(si_other));
   si_other.sin_family = AF_INET;
@@ -67,27 +165,44 @@ void send_stream(int s)
   }
   while(1)
   {
-	fin.read(filebuf, BUFLEN - 4);
-    uint32_t packet = htonl(counter);
-	std::memcpy(buf, &packet, sizeof(packet));
-	std::memcpy(buf + sizeof(packet), filebuf, BUFLEN - 4);
-	if (sendto(s, buf, BUFLEN, 0 , (struct sockaddr *) &si_other, slen)==-1)
+	if(skipped.empty())
 	{
-	  die("sendto()");
+	  fin.read(filebuf, BUFLEN - 4);
+	  uint32_t packet = htonl(counter);
+	  std::memcpy(buf, &packet, sizeof(packet));
+	  std::memcpy(buf + sizeof(packet), filebuf, BUFLEN - 4);
+	 std::chrono::nanoseconds w( 1 );
+	 std::this_thread::sleep_for( w );
+	  //std::cout<<"Send: "<<counter<<std::endl;
+	  if (sendto(s, buf, BUFLEN, 0 , (struct sockaddr *) &si_other, slen)==-1)
+	  {
+		die("sendto()");
+	  }
+	  cache.add(counter, buf);
+	  counter++;
 	}
-	counter++;
-	//if((counter % 1024) == 0)
-	//{
-	  //auto duration = std::chrono::duration_cast<std::chrono::milliseconds> 
-                            //(std::chrono::steady_clock::now() - start);
-	  //std::cout<<"Time: "<<duration.count()<<std::endl;
-	  //start = std::chrono::steady_clock::now();
-	//}
+	else
+	{
+	  uint32_t e = skipped.pop();
+	  std::cout<<"Resend: "<<e<<std::endl;
+	  cache.get(e, buf);
+	  if (sendto(s, buf, BUFLEN, 0 , (struct sockaddr *) &si_other, slen)==-1)
+	  {
+		die("sendto()");
+	  }
+	}
+
+	if(checker.skip())
+	{
+	  //std::cout<<"Skipped: "<<counter<<std::endl;
+	  counter++;
+	}
+
 	auto duration = std::chrono::duration_cast<std::chrono::milliseconds> 
 						  (std::chrono::steady_clock::now() - start);
 	if(duration.count() == 1000)
 	{
-	  std::cout<<"Bitrate: "<<(counter - last_counter)/1024<<"Mb/сек"<<std::endl;
+	  std::cout<<"Bitrate: "<<(counter - last_counter)/1024<<" Mb/сек"<<std::endl;
 	  start = std::chrono::steady_clock::now();
 	  last_counter = counter;
 	}
@@ -104,8 +219,8 @@ void read_stream(int s)
 	  std::cout<<"Recieve error"<<std::endl;
 	  continue;
 	}
-    uint32_t counter = ntohl(packet);
-	std::cout<<counter<<std::endl;
+    uint32_t required = ntohl(packet);
+	skipped.push(required);
   }
 }
 
