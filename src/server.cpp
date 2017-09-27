@@ -58,7 +58,7 @@ int main(void)
 	  }
 	  uint32_t *packet = (uint32_t*)buf;
 	  uint32_t counter = ntohl(*packet);
-	  //std::cout<<"Get: "<<counter<<std::endl;
+	  std::cout<<"Get: "<<counter<<std::endl;
 
 	  auto res = std::find(absent.begin(), absent.end(), counter);
 	  if(res == absent.end())
@@ -67,7 +67,7 @@ int main(void)
 		{
 		  for(uint32_t i = last_counter + 1; i < counter; i++)
 		  {
-			//std::cout<<"Skipped: "<<i<<std::endl;
+			std::cout<<"Skipped: "<<i<<std::endl;
 			absent.push_back(i);
 		  } 
 		}
@@ -81,8 +81,7 @@ int main(void)
 	  if (!absent.empty())
 	  {
 		uint32_t required = ntohl(absent.front());
-		absent.pop_front();
-		std::cout<<"Rerquired: "<<required<<std::endl;
+		std::cout<<"Rerquired: "<<absent.front()<<std::endl;
 		if (sendto(s,  &required, sizeof(required), 0, (struct sockaddr*) &si_other, slen) == -1)
 		{
 		  die("sendto()");

@@ -89,11 +89,11 @@ class SkipCheck
   public:
 	SkipCheck(): 
 	  generator(random_device()), 
-	  distribution(0, 10000) {};
+	  distribution(0, 8) {};
 
 	bool skip()
 	{
-	  return (distribution(generator) == 500);
+	  return (distribution(generator) == 5);
 	}
 };
 
@@ -112,7 +112,8 @@ class Cache
 	void add(uint32_t num, char* data)
 	{
 	  index[position] = num;
-	  std::memcpy(&elements[position], data, sizeof(buf_item));
+	  std::cout<<"Added: "<<position<<" "<<ntohl(reinterpret_cast<uint32_t&>(*data)) <<std::endl;
+	  std::memcpy(elements[position], data, sizeof(buf_item));
 	  position++;
 	  if( position == CACHE_SIZE)
 	  {
@@ -126,11 +127,14 @@ class Cache
 	  if(res == index.cend())
 	  {
 		std::memset(data, 0, sizeof(buf_item));
-		std::memcpy(data, &num, sizeof(num));
+		uint32_t net_num = htonl(num);
+		std::memcpy(data, &net_num, sizeof(num));
+		std::cout<<"Index new: "<<ntohl(net_num)<<std::endl;
 	  }
 	  else
 	  {
-		std::memcpy(data, &elements[*res], sizeof(buf_item));
+		std::cout<<"Index old: "<<*res<<" "<<ntohl(reinterpret_cast<uint32_t&>(*elements[*res])) <<std::endl;
+		std::memcpy(data, elements[index[*res]], sizeof(buf_item));
 	  }
 	}
 };
@@ -171,15 +175,22 @@ void send_stream(int s)
 	  uint32_t packet = htonl(counter);
 	  std::memcpy(buf, &packet, sizeof(packet));
 	  std::memcpy(buf + sizeof(packet), filebuf, BUFLEN - 4);
-	 std::chrono::nanoseconds w( 1 );
-	 std::this_thread::sleep_for( w );
-	  //std::cout<<"Send: "<<counter<<std::endl;
+	  std::chrono::milliseconds w( 500 );
+	  std::this_thread::sleep_for( w );
+	  std::cout<<"Send: "<<counter<<std::endl;
+	  //std::cout<<"Num: "<<std::hex<<(int)buf[0]<<(int)buf[1]<<(int)buf[2]<<(int)buf[3]<<std::endl;
+	  std::cout<<"num: "<< ntohl(reinterpret_cast<uint32_t&>(buf)) <<std::endl;
 	  if (sendto(s, buf, BUFLEN, 0 , (struct sockaddr *) &si_other, slen)==-1)
 	  {
 		die("sendto()");
 	  }
 	  cache.add(counter, buf);
 	  counter++;
+	  if(checker.skip())
+	  {
+		std::cout<<"Skipped: "<<counter<<std::endl;
+		counter++;
+	  }
 	}
 	else
 	{
@@ -190,12 +201,6 @@ void send_stream(int s)
 	  {
 		die("sendto()");
 	  }
-	}
-
-	if(checker.skip())
-	{
-	  //std::cout<<"Skipped: "<<counter<<std::endl;
-	  counter++;
 	}
 
 	auto duration = std::chrono::duration_cast<std::chrono::milliseconds> 
