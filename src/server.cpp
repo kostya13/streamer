@@ -48,7 +48,9 @@ int main(void)
     }
      
 	uint32_t last_counter = 0;
+	bool get_first = false;
 	std::list<uint32_t> absent;
+	std::list<uint32_t> wait;
     while(1)
 	{
 
@@ -58,10 +60,16 @@ int main(void)
 	  }
 	  uint32_t *packet = (uint32_t*)buf;
 	  uint32_t counter = ntohl(*packet);
+	  if(!get_first)
+	  {
+		std::cout<<"First packet: "<<counter<<std::endl;
+		get_first = true;
+		last_counter = counter;
+	  }
 	  std::cout<<"Get: "<<counter<<std::endl;
 
-	  auto res = std::find(absent.begin(), absent.end(), counter);
-	  if(res == absent.end())
+	  auto res = std::find(wait.begin(), wait.end(), counter);
+	  if(res == wait.end())
 	  {
 		if(counter - last_counter > 1)
 		{
@@ -69,13 +77,14 @@ int main(void)
 		  {
 			std::cout<<"Skipped: "<<i<<std::endl;
 			absent.push_back(i);
+			wait.push_back(i);
 		  } 
 		}
 		last_counter = counter;
 	  }
 	  else
 	  {
-		absent.erase(res);
+		wait.erase(res);
 	  }
 
 	  if (!absent.empty())

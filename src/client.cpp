@@ -89,7 +89,7 @@ class SkipCheck
   public:
 	SkipCheck(): 
 	  generator(random_device()), 
-	  distribution(0, 3) {};
+	  distribution(0, 10) {};
 
 	bool skip()
 	{
@@ -136,7 +136,7 @@ class Cache
 		auto i = res - index.cbegin();
 		std::cout<<"Index old: "<<num<<" "<<i<<" "<<ntohl(reinterpret_cast<uint32_t&>(*elements[i])) <<std::endl;
 		std::memcpy(data, elements[i], sizeof(buf_item));
-	  std::cout<<"Restored: "<<ntohl(reinterpret_cast<uint32_t&>(*data)) <<std::endl;
+	  //std::cout<<"Restored: "<<ntohl(reinterpret_cast<uint32_t&>(*data)) <<std::endl;
 	  }
 	}
 };
@@ -177,27 +177,25 @@ void send_stream(int s)
 	  uint32_t packet = htonl(counter);
 	  std::memcpy(buf, &packet, sizeof(packet));
 	  std::memcpy(buf + sizeof(packet), filebuf, BUFLEN - 4);
-	  std::chrono::milliseconds w( 500 );
+	  std::chrono::microseconds w( 50000 );
 	  std::this_thread::sleep_for( w );
-	  std::cout<<"Send: "<<counter<<std::endl;
-	  if (sendto(s, buf, BUFLEN, 0 , (struct sockaddr *) &si_other, slen)==-1)
+	  if(!checker.skip())
 	  {
-		die("sendto()");
+		//std::cout<<"Send: "<<counter<<std::endl;
+		if (sendto(s, buf, BUFLEN, 0 , (struct sockaddr *) &si_other, slen)==-1)
+		{
+		  die("sendto()");
+		}
 	  }
 	  cache.add(counter, buf);
 	  counter++;
-	  if(checker.skip())
-	  {
-		std::cout<<"Skipped: "<<counter<<std::endl;
-		counter++;
-	  }
 	}
 	else
 	{
 	  uint32_t e = skipped.pop();
 	  std::cout<<"Resend: "<<e<<std::endl;
 	  cache.get(e, buf);
-	  std::cout<<"From buf: "<<ntohl(reinterpret_cast<uint32_t&>(*buf)) <<std::endl;
+	  //std::cout<<"From buf: "<<ntohl(reinterpret_cast<uint32_t&>(*buf)) <<std::endl;
 	  if (sendto(s, buf, BUFLEN, 0 , (struct sockaddr *) &si_other, slen)==-1)
 	  {
 		die("sendto()");
