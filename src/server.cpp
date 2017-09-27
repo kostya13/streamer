@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <iostream>
 #include <list>
+#include <vector>
 #include <algorithm>
  
 const unsigned int BUFLEN =  1028;  //Max length of buffer
@@ -49,7 +50,7 @@ int main(void)
      
 	uint32_t last_counter = 0;
 	bool get_first = false;
-	std::list<uint32_t> absent;
+	std::vector<uint32_t> absent;
 	std::list<uint32_t> wait;
     while(1)
 	{
@@ -89,13 +90,19 @@ int main(void)
 
 	  if (!absent.empty())
 	  {
-		uint32_t required = ntohl(absent.front());
-		std::cout<<"Rerquired: "<<absent.front()<<std::endl;
-		if (sendto(s,  &required, sizeof(required), 0, (struct sockaddr*) &si_other, slen) == -1)
+		uint32_t out_buf[256];
+		std::cout<<"Absent size: "<<absent.size()<<std::endl;
+		for(int i=0; i<absent.size(); i++)
 		{
-		  die("sendto()");
+			//std::cout<<"Rerquired: "<<absent[i]<<std::endl;
+		    out_buf[i] = ntohl(absent[i]);
 		}
-		absent.pop_front();
+		if (sendto(s,  out_buf, sizeof(uint32_t)*absent.size() , 0, (struct sockaddr*) &si_other, slen) == -1)
+		{
+			std::cout<<"Send error"<<std::endl;
+			continue;
+		}
+		absent.clear();
 	  }
 	}
 	close(s);

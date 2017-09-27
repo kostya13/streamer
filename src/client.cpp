@@ -53,6 +53,10 @@ public:
 	   return _elements.empty();
 	 }
 
+	 size_t size()
+	 {
+	   return _elements.size();
+	 }
 };
 
 
@@ -111,7 +115,7 @@ class Cache
 	int position = 0;
 	void add(uint32_t num, char* data)
 	{
-	  std::cout<<"Added: "<<position<<" "<<ntohl(reinterpret_cast<uint32_t&>(*data)) <<std::endl;
+	  //std::cout<<"Added: "<<position<<" "<<ntohl(reinterpret_cast<uint32_t&>(*data)) <<std::endl;
 	  index[position] = num;
 	  std::memcpy(elements[position], data, sizeof(buf_item));
 	  position++;
@@ -129,12 +133,12 @@ class Cache
 		std::memset(data, 0, sizeof(buf_item));
 		uint32_t net_num = htonl(num);
 		std::memcpy(data, &net_num, sizeof(num));
-		std::cout<<"Index new: "<<ntohl(net_num)<<std::endl;
+		//std::cout<<"Index new: "<<ntohl(net_num)<<std::endl;
 	  }
 	  else
 	  {
 		auto i = res - index.cbegin();
-		std::cout<<"Index old: "<<num<<" "<<i<<" "<<ntohl(reinterpret_cast<uint32_t&>(*elements[i])) <<std::endl;
+		//std::cout<<"Index old: "<<num<<" "<<i<<" "<<ntohl(reinterpret_cast<uint32_t&>(*elements[i])) <<std::endl;
 		std::memcpy(data, elements[i], sizeof(buf_item));
 	  //std::cout<<"Restored: "<<ntohl(reinterpret_cast<uint32_t&>(*data)) <<std::endl;
 	  }
@@ -171,17 +175,18 @@ void send_stream(int s)
   }
   while(1)
   {
+	//std::cout<<"Size: "<<skipped.size()<<std::endl;
 	if(skipped.empty())
 	{
 	  fin.read(filebuf, BUFLEN - 4);
 	  uint32_t packet = htonl(counter);
 	  std::memcpy(buf, &packet, sizeof(packet));
 	  std::memcpy(buf + sizeof(packet), filebuf, BUFLEN - 4);
-	  std::chrono::microseconds w( 50000 );
-	  std::this_thread::sleep_for( w );
-	  if(!checker.skip())
+	  //std::chrono::microseconds w( 1 );
+	  //std::this_thread::sleep_for( w );
+	  //if(!checker.skip())
 	  {
-		//std::cout<<"Send: "<<counter<<std::endl;
+		std::cout<<"Send: "<<counter<<std::endl;
 		if (sendto(s, buf, BUFLEN, 0 , (struct sockaddr *) &si_other, slen)==-1)
 		{
 		  die("sendto()");
@@ -217,14 +222,18 @@ void read_stream(int s)
 {
   while(1)
   {
-    uint32_t packet;
-	if (recvfrom(s, &packet, sizeof(packet), 0, nullptr, 0) == -1)
+	uint32_t buf[256];
+	auto recieved = recvfrom(s, buf, sizeof(buf), 0, nullptr, 0);
+	if (recieved == -1)
 	{
 	  std::cout<<"Recieve error"<<std::endl;
 	  continue;
 	}
-    uint32_t required = ntohl(packet);
-	skipped.push(required);
+	for(int i = 0; i<recieved/sizeof(uint32_t); i++)
+	{
+	  uint32_t required = ntohl(buf[i]);
+	  skipped.push(required);
+	}
   }
 }
 
