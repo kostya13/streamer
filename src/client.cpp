@@ -89,11 +89,11 @@ class SkipCheck
   public:
 	SkipCheck(): 
 	  generator(random_device()), 
-	  distribution(0, 8) {};
+	  distribution(0, 3) {};
 
 	bool skip()
 	{
-	  return (distribution(generator) == 5);
+	  return (distribution(generator) == 2);
 	}
 };
 
@@ -111,8 +111,8 @@ class Cache
 	int position = 0;
 	void add(uint32_t num, char* data)
 	{
-	  index[position] = num;
 	  std::cout<<"Added: "<<position<<" "<<ntohl(reinterpret_cast<uint32_t&>(*data)) <<std::endl;
+	  index[position] = num;
 	  std::memcpy(elements[position], data, sizeof(buf_item));
 	  position++;
 	  if( position == CACHE_SIZE)
@@ -133,8 +133,10 @@ class Cache
 	  }
 	  else
 	  {
-		std::cout<<"Index old: "<<*res<<" "<<ntohl(reinterpret_cast<uint32_t&>(*elements[*res])) <<std::endl;
-		std::memcpy(data, elements[index[*res]], sizeof(buf_item));
+		auto i = res - index.cbegin();
+		std::cout<<"Index old: "<<num<<" "<<i<<" "<<ntohl(reinterpret_cast<uint32_t&>(*elements[i])) <<std::endl;
+		std::memcpy(data, elements[i], sizeof(buf_item));
+	  std::cout<<"Restored: "<<ntohl(reinterpret_cast<uint32_t&>(*data)) <<std::endl;
 	  }
 	}
 };
@@ -178,8 +180,6 @@ void send_stream(int s)
 	  std::chrono::milliseconds w( 500 );
 	  std::this_thread::sleep_for( w );
 	  std::cout<<"Send: "<<counter<<std::endl;
-	  //std::cout<<"Num: "<<std::hex<<(int)buf[0]<<(int)buf[1]<<(int)buf[2]<<(int)buf[3]<<std::endl;
-	  std::cout<<"num: "<< ntohl(reinterpret_cast<uint32_t&>(buf)) <<std::endl;
 	  if (sendto(s, buf, BUFLEN, 0 , (struct sockaddr *) &si_other, slen)==-1)
 	  {
 		die("sendto()");
@@ -197,6 +197,7 @@ void send_stream(int s)
 	  uint32_t e = skipped.pop();
 	  std::cout<<"Resend: "<<e<<std::endl;
 	  cache.get(e, buf);
+	  std::cout<<"From buf: "<<ntohl(reinterpret_cast<uint32_t&>(*buf)) <<std::endl;
 	  if (sendto(s, buf, BUFLEN, 0 , (struct sockaddr *) &si_other, slen)==-1)
 	  {
 		die("sendto()");

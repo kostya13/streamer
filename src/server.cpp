@@ -86,6 +86,7 @@ int main(void)
 		{
 		  die("sendto()");
 		}
+		absent.pop_front();
 	  }
 	}
 	close(s);
