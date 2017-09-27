@@ -7,8 +7,9 @@
 #include<arpa/inet.h>
 #include<sys/socket.h>
 #include <unistd.h>
+#include <iostream>
  
-const unsigned int BUFLEN =  512;  //Max length of buffer
+const unsigned int BUFLEN =  1028;  //Max length of buffer
 const unsigned int PORT = 8888;   //The port on which to listen for incoming data
  
 void die(const char *s)
@@ -44,30 +45,31 @@ int main(void)
         die("bind");
     }
      
-    //keep listening for data
+	printf("Waiting for data...");
+	fflush(stdout);
+	uint32_t last_counter = 0;
     while(1)
-    {
-        printf("Waiting for data...");
-        fflush(stdout);
-         
-        //try to receive some data, this is a blocking call
-        if ((recv_len = recvfrom(s, buf, BUFLEN, 0, (struct sockaddr *) &si_other, &slen)) == -1)
-        {
-            die("recvfrom()");
-        }
-         
-        //print details of the client/peer and the data received
-        printf("Received packet from %s:%d\n", inet_ntoa(si_other.sin_addr), ntohs(si_other.sin_port));
-        printf("Data: %s\n" , buf);
-         
-		usleep(1);
-        //now reply the client with the same data
-        if (sendto(s, buf, recv_len, 0, (struct sockaddr*) &si_other, slen) == -1)
-        {
-            die("sendto()");
-        }
-    }
- 
-    close(s);
-    return 0;
+	{
+
+	  if ((recv_len = recvfrom(s, buf, BUFLEN, 0, (struct sockaddr *) &si_other, &slen)) == -1)
+	  {
+		die("recvfrom()");
+	  }
+	  uint32_t *packet = (uint32_t*)buf;
+	  uint32_t counter = ntohl(*packet);
+
+	  if(counter - last_counter > 1)
+	  {
+		if (sendto(s,  packet, sizeof(*packet), 0, (struct sockaddr*) &si_other, slen) == -1)
+		{
+		  die("sendto()");
+		}
+	  }
+	  last_counter = counter;
+	  //std::cout<<"Counter: "<<counter<<" "<<last_counter<<std::endl;
+
+	}
+
+	close(s);
+	return 0;
 }
