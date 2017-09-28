@@ -1,18 +1,18 @@
 /*
     Simple udp server
 */
-#include<stdio.h> //printf
-#include<string.h> //memset
-#include<stdlib.h> //exit(0);
-#include<arpa/inet.h>
-#include<sys/socket.h>
-#include <unistd.h>
-#include <iostream>
-#include <unordered_set>
 #include <algorithm>
+#include <iostream>
+#include <unistd.h>
+#include <unordered_set>
+#include<arpa/inet.h>
+#include<cstdlib> 
+#include<cstring> 
+#include<sys/socket.h>
  
-const unsigned int BUFLEN =  1028;  //Max length of buffer
-const unsigned int PORT = 8888;   //The port on which to listen for incoming data
+const unsigned int BUFLEN =  1028;
+const unsigned int PORT = 8888;
+const unsigned int SEND_BUF_LEN = 2;
  
 void die(const char *s)
 {
@@ -28,54 +28,51 @@ int main(void)
 	socklen_t slen = sizeof(si_other);
     char buf[BUFLEN];
      
-    //create a UDP socket
     if ((s=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
     {
         die("socket");
     }
      
-    // zero out the structure
     memset((char *) &si_me, 0, sizeof(si_me));
-     
     si_me.sin_family = AF_INET;
     si_me.sin_port = htons(PORT);
     si_me.sin_addr.s_addr = htonl(INADDR_ANY);
      
-    //bind socket to port
     if( bind(s , (struct sockaddr*)&si_me, sizeof(si_me) ) == -1)
     {
         die("bind");
     }
      
 	uint32_t last_counter = 0;
-	bool get_first = false;
-	std::unordered_set<uint32_t> wait;
+	std::unordered_set<uint32_t> missed_packets;
+
+	if ((recv_len = recvfrom(s, buf, BUFLEN, 0, (struct sockaddr *) &si_other, &slen)) == -1)
+	{
+	  die("Recieve first packet");
+	}
+	uint32_t counter = ntohl(reinterpret_cast<uint32_t&>(buf));
+	std::cout<<"First packet: "<<counter<<std::endl;
+	last_counter = counter;
     while(1)
 	{
-
 	  if ((recv_len = recvfrom(s, buf, BUFLEN, 0, (struct sockaddr *) &si_other, &slen)) == -1)
 	  {
-		die("recvfrom()");
+		std::cout<<"Recieve error"<<std::endl;
+		continue;
 	  }
-	  uint32_t *packet = (uint32_t*)buf;
-	  uint32_t counter = ntohl(*packet);
-	  if(!get_first)
-	  {
-		std::cout<<"First packet: "<<counter<<std::endl;
-		get_first = true;
-		last_counter = counter;
-	  }
-	  //std::cout<<"Get: "<<counter<<std::endl;
+	  counter = ntohl(reinterpret_cast<uint32_t&>(buf));
 
-	  auto res = std::find(wait.begin(), wait.end(), counter);
-	  if(res == wait.end())
+	  auto missed = std::find(missed_packets.begin(), missed_packets.end(), counter);
+	  bool new_packet = (missed == missed_packets.end());
+	  if(new_packet)
 	  {
-		if(counter - last_counter > 1)
+		bool has_missed_packets = (counter - last_counter > 1);
+		if(has_missed_packets)
 		{
-		  uint32_t out_buf[2];
+		  uint32_t out_buf[SEND_BUF_LEN];
 		  out_buf[0] = ntohl(last_counter + 1);
 		  out_buf[1] = ntohl(counter);
-		  if (sendto(s,  out_buf, sizeof(uint32_t)*2 , 0, (struct sockaddr*) &si_other, slen) == -1)
+		  if (sendto(s,  out_buf, sizeof(uint32_t) * SEND_BUF_LEN , 0, (struct sockaddr*) &si_other, slen) == -1)
 		  {
 			std::cout<<"Send error"<<std::endl;
 			continue;
@@ -83,17 +80,16 @@ int main(void)
 		  for(uint32_t i = last_counter + 1; i < counter; i++)
 		  {
 			  std::cout<<"Skipped: "<<i<<std::endl;
-			  wait.insert(i);
+			  missed_packets.insert(i);
 		  } 
 		}
 		last_counter = counter;
 	  }
 	  else
 	  {
-		std::cout<<"Get losted packet: "<<*res<<std::endl;
-		wait.erase(res);
+		std::cout<<"Get missed packet: "<<*missed<<std::endl;
+		missed_packets.erase(missed);
 	  }
 	}
-	close(s);
 	return 0;
 }

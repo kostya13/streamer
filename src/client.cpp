@@ -1,26 +1,24 @@
 /*
-    Simple udp client
+    UDP клиент.
+	Посылает пакеты состоящие из заголовка: номер пакета
+	и данных.
+	Может пропускать некоторые пакеты.
 */
-#include <thread>
-#include <iostream>
-#include <fstream>
-#include <cstdio>
-#include <cstring>
-#include <random>
-#include<string.h> //memset
-#include<stdlib.h> //exit(0);
+#include <algorithm>
 #include<arpa/inet.h>
-#include<sys/socket.h>
-#include <unistd.h>
+#include <array>
+#include <cstdio>
+#include <cstdlib> 
+#include <cstring>
+#include <fstream>
+#include <iostream>
 #include <list>
 #include <mutex>
-#include <map>
-#include <vector>
-#include <array>
-#include <algorithm>
+#include <random>
+#include<sys/socket.h>
+#include <thread>
 
  
-//const char* SERVER = "11.0.0.3";
 const char* SERVER = "127.0.0.1";
 const unsigned int BUFLEN =  1028;  //Max length of buffer
 const unsigned int PORT = 8888;   //The port on which to listen for incoming data
