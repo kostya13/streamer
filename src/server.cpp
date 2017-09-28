@@ -19,10 +19,9 @@
 #include<cstdlib> 
 #include<cstring> 
 #include<sys/socket.h>
+#include "constants.h"
  
-const int SOCKET_ERROR = -1;
-const unsigned int BUFLEN = 1028;
-const unsigned int PORT = 8888;
+const unsigned int RECV_BUF_LEN = HEADER_LEN + PAYLOAD_LEN_MAX;
 const unsigned int SEND_BUF_LEN = 2;
 const socklen_t SLEN = sizeof(sockaddr_in);
 typedef std::unordered_set<uint32_t> Missed;
@@ -59,7 +58,7 @@ void handle_new_packet(uint32_t counter, uint32_t last_counter,
 }
 
 
-int prepare_socket()
+int prepare_socket(unsigned int port)
 {
   int s;
   sockaddr_in si_me;
@@ -70,7 +69,7 @@ int prepare_socket()
 
   memset((char*)&si_me, 0, sizeof(si_me));
   si_me.sin_family = AF_INET;
-  si_me.sin_port = htons(PORT);
+  si_me.sin_port = htons(port);
   si_me.sin_addr.s_addr = htonl(INADDR_ANY);
 
   if( bind(s, (sockaddr*)&si_me, sizeof(si_me) ) == SOCKET_ERROR)
@@ -80,28 +79,89 @@ int prepare_socket()
   return s;
 }
 
-int main(void)
+
+void check_options(unsigned int port)
 {
-    sockaddr_in si_other;
-    socklen_t slen = sizeof(sockaddr_in);
-	int socket = prepare_socket();
-    char buf[BUFLEN];
-	uint32_t last_counter = 0;
-	Missed missed_packets;
-     
-	if (recvfrom(socket, buf, BUFLEN, 0, (sockaddr*)&si_other, &slen) == SOCKET_ERROR)
+  if(port < MIN_PORT)
+  {
+	std::cout<<"Port: "<<port<<std::endl;
+	die("Incorrect port");
+  }
+}
+
+bool is_good_packet(size_t length)
+{
+  return (length > HEADER_LEN) and (length <= HEADER_LEN + PAYLOAD_LEN_MAX);
+}
+
+
+bool use_payload(size_t length, char* buf)
+{
+  if (length == SOCKET_ERROR)
+  {
+	return false;
+  }
+  else if (is_good_packet(length))
+  {
+	// Здесь обрабатывается пакет
+	return true;
+  }
+  return false;
+}
+
+
+int main(int argc, char *argv[])
+{
+  sockaddr_in si_other;
+  socklen_t slen = sizeof(sockaddr_in);
+  unsigned int port = DEFAULT_PORT;
+  char buf[RECV_BUF_LEN];
+  uint32_t last_counter = 0;
+  Missed missed_packets;
+  size_t recieved;
+  uint32_t counter;
+
+  if(argc == 1)
+  {
+	std::cout<<"Use default port: "<<port<<std::endl;
+  }
+  else
+  {
+	const char *opts = "p:";
+	int opt;
+	while((opt = getopt(argc, argv, opts)) != -1) 
 	{
-	  die("Recieve first packet");
+	  switch(opt)
+	  {
+		case 'p': 
+		  port = atoi(optarg);
+		  break;
+		default:
+		  break;
+	  }
 	}
-	uint32_t counter = ntohl(reinterpret_cast<uint32_t&>(buf));
-	std::cout<<"First packet: "<<counter<<std::endl;
-	last_counter = counter;
+	check_options(port);
+	std::cout<<"Use port: "<<port<<std::endl;
+  }
+
+	int socket = prepare_socket(port);
+	recieved = recvfrom(socket, buf, RECV_BUF_LEN, 0, (sockaddr*)&si_other, &slen);
+	if(use_payload(recieved, buf))
+	{
+	  counter = ntohl(reinterpret_cast<uint32_t&>(buf));
+	  std::cout<<"First packet: "<<counter<<std::endl;
+	  last_counter = counter;
+	}
+	else
+	{
+	  die("Can't recieve packets");
+	}
 
     while(1)
 	{
-	  if (recvfrom(socket, buf, BUFLEN, 0, (sockaddr*)&si_other, &slen) == SOCKET_ERROR)
+	  recieved = recvfrom(socket, buf, RECV_BUF_LEN, 0, (sockaddr*)&si_other, &slen);
+	  if(!use_payload(recieved, buf))
 	  {
-		std::cout<<"Recieve error"<<std::endl;
 		continue;
 	  }
 	  counter = ntohl(reinterpret_cast<uint32_t&>(buf));
