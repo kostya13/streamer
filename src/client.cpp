@@ -21,12 +21,11 @@
 #include <thread>
 #include "constants.h"
  
-const size_t PAYLOAD_LEN_DEFAULT = PAYLOAD_LEN_MAX;
 const size_t CACHE_SIZE = 1024;  
 const unsigned int RECV_BUF_LEN = 2;
-const unsigned int SEND_BUF_LEN = HEADER_LEN + PAYLOAD_LEN_MAX;
+const unsigned int SEND_BUF_LEN = HEADER_LEN + PAYLOAD_LEN;
 const unsigned int MILISEC_IN_SEC = 1000;
-const unsigned int BYTES_IN_MBYTE = 1024;
+const unsigned int BYTES_IN_MBYTE = 1024 * 1024;
 
 
 void die(const char *s)
@@ -79,6 +78,14 @@ public:
 	   bool is_empty = _elements.empty();
 	   _lock.unlock();
 	   return is_empty;
+	 }
+
+	 size_t size()
+	 {
+	   _lock.lock();
+	   size_t size = _elements.size();
+	   _lock.unlock();
+	   return size;
 	 }
 };
 
@@ -191,29 +198,29 @@ class Producer
 };
 
 
-void prepare_buffer(uint32_t counter, size_t payload_len, 
+void prepare_buffer(uint32_t counter,
 	                Producer& producer, Cache& cache, char* buf)
 {
-  char payload[PAYLOAD_LEN_MAX];
+  char payload[PAYLOAD_LEN];
   uint32_t packet = htonl(counter);
   std::memcpy(buf, &packet, HEADER_LEN);
   producer.read(payload);
-  std::memcpy(buf + HEADER_LEN, payload, payload_len);
+  std::memcpy(buf + HEADER_LEN, payload, PAYLOAD_LEN);
   cache.add(counter, buf);
 }
 
 void send_thread(int socket, std::string& server_ip, int port, 
-	             size_t payload_len, Container& skipped)
+	             Container& skipped)
 {
   struct sockaddr_in si_other;
   socklen_t slen = sizeof(si_other);
   char buf[SEND_BUF_LEN];
-  const size_t buf_len = HEADER_LEN + payload_len;
+  const size_t buf_len = HEADER_LEN + PAYLOAD_LEN;
   uint32_t counter = 0;
   uint32_t last_counter = 0;
   SkipCheck checker;
   Cache cache;
-  Producer producer(payload_len);
+  Producer producer(PAYLOAD_LEN);
 
   memset((char*) &si_other, 0, sizeof(si_other));
   si_other.sin_family = AF_INET;
@@ -225,29 +232,29 @@ void send_thread(int socket, std::string& server_ip, int port,
   }
 
   auto start = std::chrono::steady_clock::now();
-  size_t bitrate;
+  std::chrono::microseconds delay(1);
   while(FOREVER)
   {
 	if(skipped.is_empty())
 	{
-		prepare_buffer(counter, payload_len, producer, cache, buf);
-		if(checker.send_allowed())
+	  //Небольшойтаймаут, чтобы разгрузить процессор
+	  std::this_thread::sleep_for(delay);
+	  prepare_buffer(counter, producer, cache, buf);
+	  if(checker.send_allowed())
+	  {
+		if (sendto(socket, buf, buf_len, 0, (sockaddr*)&si_other, slen) == SOCKET_ERROR)
 		{
-		  //Чтобы разгрузить процессор, добавляестся пауза перед отправкой нового пакета
-		  std::chrono::microseconds w(1);
-		  std::this_thread::sleep_for(w);
-		  if (sendto(socket, buf, buf_len, 0 , (sockaddr*)&si_other, slen) == SOCKET_ERROR)
-		  {
-			std::cout<<"Skip packet"<<std::endl;
-		  }
+		  std::cout<<"Skip packet"<<std::endl;
 		}
-		counter++;
+	  }
+	  counter++;
 	}
 	else
 	{
 	  uint32_t skipped_num = skipped.pop();
 	  cache.get(skipped_num, buf);
-	  if (sendto(socket, buf, buf_len, 0 , (sockaddr*)&si_other, slen) == SOCKET_ERROR)
+	  std::this_thread::sleep_for(delay);
+	  if (sendto(socket, buf, buf_len, 0, (sockaddr*)&si_other, slen) == SOCKET_ERROR)
 	  {
 		std::cout<<"Skip packet"<<std::endl;
 	  }
@@ -257,8 +264,8 @@ void send_thread(int socket, std::string& server_ip, int port,
 						  (std::chrono::steady_clock::now() - start);
 	if(duration.count() >= MILISEC_IN_SEC)
 	{
-	  bitrate = (counter - last_counter)*payload_len/BYTES_IN_MBYTE;
-	  std::cout<<"Bitrate: "<<bitrate<<" Mb/сек"<<std::endl;
+	  size_t bitrate = (counter - last_counter)*PAYLOAD_LEN/BYTES_IN_MBYTE;
+	  std::cout<<"Bitrate: "<<bitrate<<" Mb/sec"<<std::endl;
 	  start = std::chrono::steady_clock::now();
 	  last_counter = counter;
 	}
@@ -276,23 +283,12 @@ void read_thread(int socket, Container& skipped)
 	  std::cout<<"Recieve error"<<std::endl;
 	  continue;
 	}
-	if (recieved == sizeof(buf))
-	{
-	  skipped.push(ntohl(buf[0]), ntohl(buf[1]));
-	}
-	else
-	{
-	  std::cout<<"Incorrect data"<<std::endl;
-	}
+	skipped.push(ntohl(buf[0]), ntohl(buf[1]));
   }
 }
 
-void check_options(unsigned int port, size_t payload_len)
+void check_port(unsigned int port)
 {
-  if (payload_len < PAYLOAD_LEN_MIN or payload_len > PAYLOAD_LEN_MAX)
-  {
-	die("Incorrect payload length");
-  }
   if(port < MIN_PORT)
   {
 	die("Incorrect port");
@@ -303,22 +299,14 @@ int main(int argc, char *argv[])
 {
   std::string server(DEFAULT_SERVER);
   int port = DEFAULT_PORT;   
-  size_t payload_len = PAYLOAD_LEN_DEFAULT;
-  if(argc == 1)
+  if(argc > 1)
   {
-	std::cout<<"Use default server: "<<server<<":"<<port<<std::endl;
-  }
-  else
-  {
-	const char *opts = "s:p:a:";
+	const char *opts = "s:p:";
 	int opt;
 	while((opt = getopt(argc, argv, opts)) != -1) 
 	{
 	  switch(opt)
 	  {
-		case 's': 
-		  payload_len = atoi(optarg);
-		  break;
 		case 'p': 
 		  port = atoi(optarg);
 		  if(port < MIN_PORT)
@@ -327,20 +315,19 @@ int main(int argc, char *argv[])
 			die("Incorrect port");
 		  }
 		  break;
-		case 'a':
+		case 's':
 		  server.assign(optarg);
 		  break;
 		default:
 		  break;
 	  }
-	  check_options(port, payload_len);
+	  check_port(port);
 	}
-	std::cout<<"Use server: "<<server<<":"<<port<<std::endl;
-	std::cout<<"Payload length: "<<payload_len<<std::endl;
   }
+  std::cout<<"Use server: "<<server<<":"<<port<<std::endl;
   int socket = prepare_socket();
   Container skipped;
-  std::thread t1(send_thread, socket, std::ref(server), port, payload_len, std::ref(skipped));
+  std::thread t1(send_thread, socket, std::ref(server), port, std::ref(skipped));
   std::thread t2(read_thread, socket, std::ref(skipped));
   t1.join();
   t2.join();

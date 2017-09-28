@@ -21,7 +21,7 @@
 #include<sys/socket.h>
 #include "constants.h"
  
-const unsigned int RECV_BUF_LEN = HEADER_LEN + PAYLOAD_LEN_MAX;
+const unsigned int RECV_BUF_LEN = HEADER_LEN + PAYLOAD_LEN;
 const unsigned int SEND_BUF_LEN = 2;
 const socklen_t SLEN = sizeof(sockaddr_in);
 typedef std::unordered_set<uint32_t> Missed;
@@ -51,9 +51,9 @@ void check_missed(uint32_t counter, uint32_t last_counter,
 	}
 	for(auto i = last_counter + 1; i < counter; i++)
 	{
-	  std::cout<<"Skipped: "<<i<<std::endl;
 	  missed_packets.insert(i);
 	} 
+	std::cout<<"Skipped: "<<last_counter + 1<<" - "<<counter - 1<<" = "<<(counter - last_counter - 1)<<std::endl;
   }
 }
 
@@ -91,7 +91,7 @@ void check_options(unsigned int port)
 
 bool is_good_packet(size_t length)
 {
-  return (length > HEADER_LEN) and (length <= HEADER_LEN + PAYLOAD_LEN_MAX);
+  return (length == HEADER_LEN + PAYLOAD_LEN);
 }
 
 
@@ -154,7 +154,7 @@ int main(int argc, char *argv[])
   }
   else
   {
-	die("Can't recieve packets");
+	die("Can't recieve packet");
   }
 
   while(FOREVER)
