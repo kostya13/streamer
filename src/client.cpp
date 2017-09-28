@@ -25,6 +25,8 @@ const size_t PAYLOAD_LEN_DEFAULT = PAYLOAD_LEN_MAX;
 const size_t CACHE_SIZE = 1024;  
 const unsigned int RECV_BUF_LEN = 2;
 const unsigned int SEND_BUF_LEN = HEADER_LEN + PAYLOAD_LEN_MAX;
+const unsigned int MILISEC_IN_SEC = 1000;
+const unsigned int BYTES_IN_MBYTE = 1024;
 
 
 void die(const char *s)
@@ -223,6 +225,7 @@ void send_thread(int socket, std::string& server_ip, int port,
   }
 
   auto start = std::chrono::steady_clock::now();
+  size_t bitrate;
   while(FOREVER)
   {
 	if(skipped.is_empty())
@@ -230,6 +233,9 @@ void send_thread(int socket, std::string& server_ip, int port,
 		prepare_buffer(counter, payload_len, producer, cache, buf);
 		if(checker.send_allowed())
 		{
+		  //Чтобы разгрузить процессор, добавляестся пауза перед отправкой нового пакета
+		  std::chrono::microseconds w(1);
+		  std::this_thread::sleep_for(w);
 		  if (sendto(socket, buf, buf_len, 0 , (sockaddr*)&si_other, slen) == SOCKET_ERROR)
 		  {
 			std::cout<<"Skip packet"<<std::endl;
@@ -249,9 +255,10 @@ void send_thread(int socket, std::string& server_ip, int port,
 
 	auto duration = std::chrono::duration_cast<std::chrono::milliseconds> 
 						  (std::chrono::steady_clock::now() - start);
-	if(duration.count() >= 1000)
+	if(duration.count() >= MILISEC_IN_SEC)
 	{
-	  std::cout<<"Bitrate: "<<(counter - last_counter)/1024<<" Mb/сек"<<std::endl;
+	  bitrate = (counter - last_counter)*payload_len/BYTES_IN_MBYTE;
+	  std::cout<<"Bitrate: "<<bitrate<<" Mb/сек"<<std::endl;
 	  start = std::chrono::steady_clock::now();
 	  last_counter = counter;
 	}

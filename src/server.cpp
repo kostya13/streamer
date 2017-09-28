@@ -51,7 +51,7 @@ void check_missed(uint32_t counter, uint32_t last_counter,
 	}
 	for(auto i = last_counter + 1; i < counter; i++)
 	{
-	  //std::cout<<"Skipped: "<<i<<std::endl;
+	  std::cout<<"Skipped: "<<i<<std::endl;
 	  missed_packets.insert(i);
 	} 
   }
