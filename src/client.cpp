@@ -37,17 +37,10 @@ void die(const char *s)
 int prepare_socket()
 {
     int s; 
- 
     if ( (s=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
     {
-        die("socket");
+        die("Prepare socket");
     }
- 
-	//struct timeval read_timeout;
-	//read_timeout.tv_sec = 0;
-	//read_timeout.tv_usec = 1;
-	//setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &read_timeout, sizeof read_timeout);
-	
 	return s;
 }
 
@@ -77,20 +70,12 @@ public:
 	   return e;
 	 }
 
-	 bool empty()
+	 bool is_empty()
 	 {
 	   _lock.lock();
 	   bool is_empty = _elements.empty();
 	   _lock.unlock();
 	   return is_empty;
-	 }
-
-	 size_t size()
-	 {
-	   _lock.lock();
-	   size_t size = _elements.size();
-	   _lock.unlock();
-	   return size;
 	 }
 };
 
@@ -98,23 +83,30 @@ class SkipCheck
 {
   std::random_device random_device; // Источник энтропии.
   std::mt19937 generator; // Генератор случайных чисел.
-  std::uniform_int_distribution<> expectation; 
-  std::uniform_int_distribution<> count; 
+  std::uniform_int_distribution<> expectation; // Вероятность пропуска пакета 
+  std::uniform_int_distribution<> count; // Сколько пакетов пропустить
+  unsigned int lost_packets;
 
   public:
 	SkipCheck(): 
 	  generator(random_device()), 
 	  expectation(0, 10000),
-	  count(0, 3){};
+	  count(0, 3),
+	  lost_packets(0){};
 
-	size_t skip()
+	bool send_allowed()
 	{
-	  //std::cout<<"Random "<<distribution(generator)<<std::endl; 
+	  if (lost_packets > 0)
+	  {
+		lost_packets--;
+		return false;
+	  }
 	  if (expectation(generator) == 0)
 	  {
-		return count(generator);
+		lost_packets = count(generator);
+		return lost_packets > 0;
 	  }
-	  return 0;
+	  return true;
 	}
 };
 
@@ -212,54 +204,41 @@ void send_stream(int s, Container& skipped)
   memset((char *) &si_other, 0, sizeof(si_other));
   si_other.sin_family = AF_INET;
   si_other.sin_port = htons(PORT);
-
   if (inet_aton(SERVER , &si_other.sin_addr) == 0) 
   {
-	fprintf(stderr, "inet_aton() failed\n");
-	exit(1);
+	die("inet_aton() failed\n");
   }
+
   auto start = std::chrono::steady_clock::now();
   while(1)
   {
-	//std::cout<<"Size: "<<skipped.size()<<std::endl;
-	if(skipped.empty())
+	if(skipped.is_empty())
 	{
-	  auto skips  = checker.skip();
-	  if(skips)
-	  {
-		for(auto i = 0; i < skips; i++)
-		{
-		  //std::cout<<"-Skip: "<<counter<<std::endl;
-		  prepare_buffer(counter, producer, cache, buf);
-		  counter++;
-		}
-	  }
-	  else
-	  {
 		//std::cout<<"+Send: "<<counter<<std::endl;
 		prepare_buffer(counter, producer, cache, buf);
-		if (sendto(s, buf, BUFLEN, 0 , (struct sockaddr *) &si_other, slen)==-1)
+		if(checker.send_allowed())
 		{
-		  die("sendto()");
+		  if (sendto(s, buf, BUFLEN, 0 , (struct sockaddr *) &si_other, slen)==-1)
+		  {
+			std::cout<<"Skip packet"<<std::endl;
+		  }
 		}
 		counter++;
-	  }
 	}
 	else
 	{
 	  uint32_t e = skipped.pop();
 	  //std::cout<<"Resend: "<<e<<std::endl;
 	  cache.get(e, buf);
-	  //std::cout<<"From buf: "<<ntohl(reinterpret_cast<uint32_t&>(*buf)) <<std::endl;
 	  if (sendto(s, buf, BUFLEN, 0 , (struct sockaddr *) &si_other, slen)==-1)
 	  {
-		die("sendto()");
+		std::cout<<"Skip packet"<<std::endl;
 	  }
 	}
 
 	auto duration = std::chrono::duration_cast<std::chrono::milliseconds> 
 						  (std::chrono::steady_clock::now() - start);
-	if(duration.count() == 1000)
+	if(duration.count() >= 1000)
 	{
 	  std::cout<<"Bitrate: "<<(counter - last_counter)/1024<<" Mb/сек"<<std::endl;
 	  start = std::chrono::steady_clock::now();
