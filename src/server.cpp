@@ -20,11 +20,13 @@
 #include<cstring> 
 #include<sys/socket.h>
  
-const unsigned int BUFLEN =  1028;
+const int SOCKET_ERROR = -1;
+const unsigned int BUFLEN = 1028;
 const unsigned int PORT = 8888;
 const unsigned int SEND_BUF_LEN = 2;
 const socklen_t SLEN = sizeof(sockaddr_in);
 typedef std::unordered_set<uint32_t> Missed;
+
 
 void die(const char *s)
 {
@@ -32,16 +34,18 @@ void die(const char *s)
     exit(1);
 }
  
-void handle_new_packets(uint32_t counter, uint32_t last_counter, int socket, sockaddr_in* si_other,
-					    Missed& missed_packets)
+
+void handle_new_packet(uint32_t counter, uint32_t last_counter, 
+	                   int socket, sockaddr_in* si_other,
+                       Missed& missed_packets)
 {
-  bool has_missed_packets = (counter - last_counter > 1);
   uint32_t out_buf[SEND_BUF_LEN];
+  bool has_missed_packets = ((counter - last_counter) > 1);
   if(has_missed_packets)
   {
 	out_buf[0] = ntohl(last_counter + 1);
 	out_buf[1] = ntohl(counter);
-	if (sendto(socket, out_buf, sizeof(out_buf), 0, (sockaddr*) si_other, SLEN) == -1)
+	if (sendto(socket, out_buf, sizeof(out_buf), 0, (sockaddr*) si_other, SLEN) == SOCKET_ERROR)
 	{
 	  std::cout<<"Send error"<<std::endl;
 	  return;
@@ -55,11 +59,11 @@ void handle_new_packets(uint32_t counter, uint32_t last_counter, int socket, soc
 }
 
 
-int setup_socket()
+int prepare_socket()
 {
   int s;
   sockaddr_in si_me;
-  if ((s=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
+  if ((s=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == SOCKET_ERROR)
   {
 	die("socket");
   }
@@ -69,7 +73,7 @@ int setup_socket()
   si_me.sin_port = htons(PORT);
   si_me.sin_addr.s_addr = htonl(INADDR_ANY);
 
-  if( bind(s, (sockaddr*)&si_me, sizeof(si_me) ) == -1)
+  if( bind(s, (sockaddr*)&si_me, sizeof(si_me) ) == SOCKET_ERROR)
   {
 	die("bind");
   }
@@ -80,12 +84,12 @@ int main(void)
 {
     sockaddr_in si_other;
     socklen_t slen = sizeof(sockaddr_in);
-	int socket = setup_socket();
+	int socket = prepare_socket();
     char buf[BUFLEN];
 	uint32_t last_counter = 0;
 	Missed missed_packets;
      
-	if (recvfrom(socket, buf, BUFLEN, 0, (sockaddr*)&si_other, &slen) == -1)
+	if (recvfrom(socket, buf, BUFLEN, 0, (sockaddr*)&si_other, &slen) == SOCKET_ERROR)
 	{
 	  die("Recieve first packet");
 	}
@@ -95,7 +99,7 @@ int main(void)
 
     while(1)
 	{
-	  if (recvfrom(socket, buf, BUFLEN, 0, (sockaddr*)&si_other, &slen) == -1)
+	  if (recvfrom(socket, buf, BUFLEN, 0, (sockaddr*)&si_other, &slen) == SOCKET_ERROR)
 	  {
 		std::cout<<"Recieve error"<<std::endl;
 		continue;
@@ -106,7 +110,7 @@ int main(void)
 	  bool new_packet = (missed == missed_packets.end());
 	  if(new_packet)
 	  {
-		handle_new_packets(counter, last_counter, socket, &si_other, missed_packets);
+		handle_new_packet(counter, last_counter, socket, &si_other, missed_packets);
 		last_counter = counter;
 	  }
 	  else

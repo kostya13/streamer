@@ -5,24 +5,26 @@
 	Может пропускать некоторые пакеты.
 */
 #include <algorithm>
-#include<arpa/inet.h>
+#include <arpa/inet.h>
 #include <array>
 #include <cstdio>
 #include <cstdlib> 
 #include <cstring>
 #include <fstream>
+#include <getopt.h>
 #include <iostream>
 #include <list>
 #include <mutex>
 #include <random>
-#include<sys/socket.h>
+#include <sys/socket.h>
+#include <string>
 #include <thread>
-
  
-const char* SERVER = "127.0.0.1";
-const unsigned int BUFLEN =  1028;  //Max length of buffer
-const unsigned int PORT = 8888;   //The port on which to listen for incoming data
+const int SOCKET_ERROR = -1;
+const unsigned int BUFLEN =  1028;  
 const unsigned int CACHE_SIZE = 1024;  
+const bool FOREVER = true;   
+const unsigned int RECV_BUF_LEN = 2;
 
 
 void die(const char *s)
@@ -35,7 +37,7 @@ void die(const char *s)
 int prepare_socket()
 {
     int s; 
-    if ( (s=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
+    if ((s=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == SOCKET_ERROR)
     {
         die("Prepare socket");
     }
@@ -43,6 +45,7 @@ int prepare_socket()
 }
 
 
+// Хранилище пакетов, пропущенных сервером
 class Container 
 {
      std::mutex _lock;
@@ -51,7 +54,7 @@ public:
      void push(uint32_t start, uint32_t end)
 	 {
 	   _lock.lock();
-	   for(uint32_t i = start; i < end; i++)
+	   for(auto i = start; i < end; i++)
 	   {
 		 _elements.push_back(i);
 	   }
@@ -77,12 +80,15 @@ public:
 	 }
 };
 
+// Проверка условий принудительного пропуска пакетов
+// Настраивается вероятность пропуска
+// И количество пропущенных пакетов
 class SkipCheck
 {
-  std::random_device random_device; // Источник энтропии.
-  std::mt19937 generator; // Генератор случайных чисел.
-  std::uniform_int_distribution<> expectation; // Вероятность пропуска пакета 
-  std::uniform_int_distribution<> count; // Сколько пакетов пропустить
+  std::random_device random_device; 
+  std::mt19937 generator; 
+  std::uniform_int_distribution<> expectation; 
+  std::uniform_int_distribution<> count; 
   unsigned int lost_packets;
 
   public:
@@ -109,24 +115,28 @@ class SkipCheck
 };
 
 
+// Круговой буфер.
+// Используется как кэш переданных значений
+// Если элемент не найден в кэше, то передается буфер
+// заполненный нулями
 class Cache
 {
+  typedef char buf_item[BUFLEN];
+  std::array<uint32_t, CACHE_SIZE> index;
+  std::array<buf_item, CACHE_SIZE> elements;
+  int position = 0;
   public:
 	Cache()
 	{
 	  index.fill(0);
 	}
-  typedef  char buf_item[BUFLEN];
-	std::array<uint32_t, CACHE_SIZE> index;
-	std::array<buf_item, CACHE_SIZE> elements;
-	int position = 0;
+
 	void add(uint32_t num, char* data)
 	{
-	  //std::cout<<"Added: "<<position<<" "<<ntohl(reinterpret_cast<uint32_t&>(*data)) <<std::endl;
 	  index[position] = num;
 	  std::memcpy(elements[position], data, sizeof(buf_item));
 	  position++;
-	  if( position == CACHE_SIZE)
+	  if(position == CACHE_SIZE)
 	  {
 		position = 0;
 	  }
@@ -135,24 +145,23 @@ class Cache
 	void get(uint32_t num, char* data)
 	{
 	  auto res = std::find(index.cbegin(), index.cend(), num);
-	  if(res == index.cend())
+	  bool cache_miss = (res == index.cend());
+	  if(cache_miss)
 	  {
 		std::memset(data, 0, sizeof(buf_item));
 		uint32_t net_num = htonl(num);
 		std::memcpy(data, &net_num, sizeof(num));
-		//std::cout<<"Index new: "<<ntohl(net_num)<<std::endl;
 	  }
 	  else
 	  {
-		auto i = res - index.cbegin();
-		//std::cout<<"Index old: "<<num<<" "<<i<<" "<<ntohl(reinterpret_cast<uint32_t&>(*elements[i])) <<std::endl;
-		std::memcpy(data, elements[i], sizeof(buf_item));
-	  //std::cout<<"Restored: "<<ntohl(reinterpret_cast<uint32_t&>(*data)) <<std::endl;
+		auto packet_index = res - index.cbegin();
+		std::memcpy(data, elements[packet_index], sizeof(buf_item));
 	  }
 	}
 };
 
 
+// Эмулятор источника данных
 class Producer
 {
   std::ifstream fin;
@@ -160,7 +169,7 @@ class Producer
 	Producer(): 
 	  fin("/dev/urandom", std::ios::in | std::ios::binary)
 	{
-	  if(! fin)
+	  if(!fin)
 	  {
 		die("Producer()");
 	  }
@@ -180,15 +189,15 @@ class Producer
 
 void prepare_buffer(uint32_t counter, Producer& producer, Cache& cache, char* buf)
 {
-  char filebuf[BUFLEN - sizeof(uint32_t)];
-  producer.read(filebuf);
+  char payload[BUFLEN - sizeof(uint32_t)];
   uint32_t packet = htonl(counter);
   std::memcpy(buf, &packet, sizeof(packet));
-  std::memcpy(buf + sizeof(packet), filebuf, BUFLEN - sizeof(packet));
+  producer.read(payload);
+  std::memcpy(buf + sizeof(packet), payload, BUFLEN - sizeof(packet));
   cache.add(counter, buf);
 }
 
-void send_stream(int s, Container& skipped)
+void send_thread(int socket, std::string& server_ip, int port, Container& skipped)
 {
   struct sockaddr_in si_other;
   socklen_t slen = sizeof(si_other);
@@ -199,24 +208,24 @@ void send_stream(int s, Container& skipped)
   Cache cache;
   Producer producer;
 
-  memset((char *) &si_other, 0, sizeof(si_other));
+  memset((char*) &si_other, 0, sizeof(si_other));
   si_other.sin_family = AF_INET;
-  si_other.sin_port = htons(PORT);
-  if (inet_aton(SERVER , &si_other.sin_addr) == 0) 
+  si_other.sin_port = htons(port);
+  if (inet_aton(server_ip.c_str() , &si_other.sin_addr) == 0) 
   {
-	die("inet_aton() failed\n");
+	errno = EILSEQ;
+	die("inet_aton() failed");
   }
 
   auto start = std::chrono::steady_clock::now();
-  while(1)
+  while(FOREVER)
   {
 	if(skipped.is_empty())
 	{
-		//std::cout<<"+Send: "<<counter<<std::endl;
 		prepare_buffer(counter, producer, cache, buf);
 		if(checker.send_allowed())
 		{
-		  if (sendto(s, buf, BUFLEN, 0 , (struct sockaddr *) &si_other, slen)==-1)
+		  if (sendto(socket, buf, BUFLEN, 0 , (sockaddr*)&si_other, slen) == SOCKET_ERROR)
 		  {
 			std::cout<<"Skip packet"<<std::endl;
 		  }
@@ -225,10 +234,9 @@ void send_stream(int s, Container& skipped)
 	}
 	else
 	{
-	  uint32_t e = skipped.pop();
-	  //std::cout<<"Resend: "<<e<<std::endl;
-	  cache.get(e, buf);
-	  if (sendto(s, buf, BUFLEN, 0 , (struct sockaddr *) &si_other, slen)==-1)
+	  uint32_t skipped_num = skipped.pop();
+	  cache.get(skipped_num, buf);
+	  if (sendto(socket, buf, BUFLEN, 0 , (sockaddr*)&si_other, slen) == SOCKET_ERROR)
 	  {
 		std::cout<<"Skip packet"<<std::endl;
 	  }
@@ -245,18 +253,18 @@ void send_stream(int s, Container& skipped)
   }
 }
 
-void read_stream(int s, Container& skipped)
+void read_thread(int socket, Container& skipped)
 {
-  while(1)
+  uint32_t buf[RECV_BUF_LEN];
+  while(FOREVER)
   {
-	uint32_t buf[2];
-	auto recieved = recvfrom(s, buf, sizeof(buf), 0, nullptr, 0);
-	if (recieved == -1)
+	auto recieved = recvfrom(socket, buf, sizeof(buf), 0, nullptr, 0);
+	if (recieved == SOCKET_ERROR)
 	{
 	  std::cout<<"Recieve error"<<std::endl;
 	  continue;
 	}
-	if (recieved == sizeof(uint32_t) * 2)
+	if (recieved == sizeof(buf))
 	{
 	  skipped.push(ntohl(buf[0]), ntohl(buf[1]));
 	}
@@ -268,12 +276,38 @@ void read_stream(int s, Container& skipped)
 }
 
 
-int main(void)
+int main(int argc, char *argv[])
 {
-  int s = prepare_socket();
+  std::string server("127.0.0.1");
+  int port = 8888;   
+  if(argc == 1)
+  {
+	std::cout<<"Use default server: "<<server<<":"<<port<<std::endl;
+  }
+  else
+  {
+	const char *opts = "s:p:";
+	int opt;
+	while((opt = getopt(argc, argv, opts)) != -1) 
+	{
+	  switch(opt)
+	  {
+		case 'p': 
+		  port = atoi(optarg);
+		  break;
+		case 's':
+		  server.assign(optarg);
+		  break;
+		default:
+		  break;
+	  }
+	}
+	std::cout<<"Use server: "<<server<<":"<<port<<std::endl;
+  }
+  int socket = prepare_socket();
   Container skipped;
-  std::thread t1(send_stream, s, std::ref(skipped));
-  std::thread t2(read_stream, s, std::ref(skipped));
+  std::thread t1(send_thread, socket, std::ref(server), port, std::ref(skipped));
+  std::thread t2(read_thread, socket, std::ref(skipped));
   t1.join();
   t2.join();
   return 0;
