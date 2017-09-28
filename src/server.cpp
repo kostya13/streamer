@@ -34,7 +34,7 @@ void die(const char *s)
 }
  
 
-void handle_new_packet(uint32_t counter, uint32_t last_counter, 
+void check_missed(uint32_t counter, uint32_t last_counter, 
 	                   int socket, sockaddr_in* si_other,
                        Missed& missed_packets)
 {
@@ -144,40 +144,40 @@ int main(int argc, char *argv[])
 	std::cout<<"Use port: "<<port<<std::endl;
   }
 
-	int socket = prepare_socket(port);
+  int socket = prepare_socket(port);
+  recieved = recvfrom(socket, buf, RECV_BUF_LEN, 0, (sockaddr*)&si_other, &slen);
+  if(use_payload(recieved, buf))
+  {
+	counter = ntohl(reinterpret_cast<uint32_t&>(buf));
+	std::cout<<"First packet: "<<counter<<std::endl;
+	last_counter = counter;
+  }
+  else
+  {
+	die("Can't recieve packets");
+  }
+
+  while(FOREVER)
+  {
 	recieved = recvfrom(socket, buf, RECV_BUF_LEN, 0, (sockaddr*)&si_other, &slen);
-	if(use_payload(recieved, buf))
+	if(!use_payload(recieved, buf))
 	{
-	  counter = ntohl(reinterpret_cast<uint32_t&>(buf));
-	  std::cout<<"First packet: "<<counter<<std::endl;
+	  continue;
+	}
+	counter = ntohl(reinterpret_cast<uint32_t&>(buf));
+
+	auto missed = std::find(missed_packets.begin(), missed_packets.end(), counter);
+	bool new_packet = (missed == missed_packets.end());
+	if(new_packet)
+	{
+	  check_missed(counter, last_counter, socket, &si_other, missed_packets);
 	  last_counter = counter;
 	}
 	else
 	{
-	  die("Can't recieve packets");
+	  std::cout<<"Get missed packet: "<<*missed<<std::endl;
+	  missed_packets.erase(missed);
 	}
-
-    while(1)
-	{
-	  recieved = recvfrom(socket, buf, RECV_BUF_LEN, 0, (sockaddr*)&si_other, &slen);
-	  if(!use_payload(recieved, buf))
-	  {
-		continue;
-	  }
-	  counter = ntohl(reinterpret_cast<uint32_t&>(buf));
-
-	  auto missed = std::find(missed_packets.begin(), missed_packets.end(), counter);
-	  bool new_packet = (missed == missed_packets.end());
-	  if(new_packet)
-	  {
-		handle_new_packet(counter, last_counter, socket, &si_other, missed_packets);
-		last_counter = counter;
-	  }
-	  else
-	  {
-		std::cout<<"Get missed packet: "<<*missed<<std::endl;
-		missed_packets.erase(missed);
-	  }
-	}
-	return 0;
+  }
+  return 0;
 }

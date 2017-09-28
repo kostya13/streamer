@@ -228,7 +228,7 @@ void send_thread(int socket, std::string& server_ip, int port,
 	if(skipped.is_empty())
 	{
 		prepare_buffer(counter, payload_len, producer, cache, buf);
-		if(checker.send_allowed())
+		//if(checker.send_allowed())
 		{
 		  if (sendto(socket, buf, buf_len, 0 , (sockaddr*)&si_other, slen) == SOCKET_ERROR)
 		  {
