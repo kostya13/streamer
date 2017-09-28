@@ -20,6 +20,7 @@
 #include <algorithm>
 
  
+//const char* SERVER = "11.0.0.3";
 const char* SERVER = "127.0.0.1";
 const unsigned int BUFLEN =  1028;  //Max length of buffer
 const unsigned int PORT = 8888;   //The port on which to listen for incoming data
@@ -97,17 +98,23 @@ class SkipCheck
 {
   std::random_device random_device; // Источник энтропии.
   std::mt19937 generator; // Генератор случайных чисел.
-  std::uniform_int_distribution<> distribution; // Равномерное распределение [10, 20]
+  std::uniform_int_distribution<> expectation; 
+  std::uniform_int_distribution<> count; 
 
   public:
 	SkipCheck(): 
 	  generator(random_device()), 
-	  distribution(0, 10) {};
+	  expectation(0, 10000),
+	  count(0, 3){};
 
-	bool skip()
+	size_t skip()
 	{
 	  //std::cout<<"Random "<<distribution(generator)<<std::endl; 
-	  return (distribution(generator) == 0);
+	  if (expectation(generator) == 0)
+	  {
+		return count(generator);
+	  }
+	  return 0;
 	}
 };
 
@@ -159,11 +166,9 @@ class Cache
 class Producer
 {
   std::ifstream fin;
-  std::chrono::microseconds w;
   public:
 	Producer(): 
-	  fin("/dev/urandom", std::ios::in | std::ios::binary),
-	  w(1)
+	  fin("/dev/urandom", std::ios::in | std::ios::binary)
 	{
 	  if(! fin)
 	  {
@@ -178,19 +183,26 @@ class Producer
 
 	void read(char* buf)
 	{
-	  //std::this_thread::sleep_for(w);
 	  fin.read(buf, BUFLEN - sizeof(uint32_t));
 	}
 };
 
 
+void prepare_buffer(uint32_t counter, Producer& producer, Cache& cache, char* buf)
+{
+  char filebuf[BUFLEN - sizeof(uint32_t)];
+  producer.read(filebuf);
+  uint32_t packet = htonl(counter);
+  std::memcpy(buf, &packet, sizeof(packet));
+  std::memcpy(buf + sizeof(packet), filebuf, BUFLEN - sizeof(packet));
+  cache.add(counter, buf);
+}
 
 void send_stream(int s, Container& skipped)
 {
   struct sockaddr_in si_other;
   socklen_t slen = sizeof(si_other);
   char buf[BUFLEN];
-  char filebuf[BUFLEN - sizeof(uint32_t)];
   uint32_t counter = 0;
   uint32_t last_counter = 0;
   SkipCheck checker;
@@ -212,24 +224,26 @@ void send_stream(int s, Container& skipped)
 	//std::cout<<"Size: "<<skipped.size()<<std::endl;
 	if(skipped.empty())
 	{
-	  producer.read(filebuf);
-	  uint32_t packet = htonl(counter);
-	  std::memcpy(buf, &packet, sizeof(packet));
-	  std::memcpy(buf + sizeof(packet), filebuf, BUFLEN - sizeof(packet));
-	  if(!checker.skip())
+	  auto skips  = checker.skip();
+	  if(skips)
+	  {
+		for(auto i = 0; i < skips; i++)
+		{
+		  //std::cout<<"-Skip: "<<counter<<std::endl;
+		  prepare_buffer(counter, producer, cache, buf);
+		  counter++;
+		}
+	  }
+	  else
 	  {
 		//std::cout<<"+Send: "<<counter<<std::endl;
+		prepare_buffer(counter, producer, cache, buf);
 		if (sendto(s, buf, BUFLEN, 0 , (struct sockaddr *) &si_other, slen)==-1)
 		{
 		  die("sendto()");
 		}
+		counter++;
 	  }
-	  //else
-	  //{
-		//std::cout<<"-Skip: "<<counter<<std::endl;
-	  //}
-	  cache.add(counter, buf);
-	  counter++;
 	}
 	else
 	{

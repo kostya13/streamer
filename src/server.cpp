@@ -65,7 +65,7 @@ int main(void)
 		get_first = true;
 		last_counter = counter;
 	  }
-	  std::cout<<"Get: "<<counter<<std::endl;
+	  //std::cout<<"Get: "<<counter<<std::endl;
 
 	  auto res = std::find(wait.begin(), wait.end(), counter);
 	  if(res == wait.end())
