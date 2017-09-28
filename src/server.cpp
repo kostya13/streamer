@@ -8,8 +8,7 @@
 #include<sys/socket.h>
 #include <unistd.h>
 #include <iostream>
-#include <list>
-#include <vector>
+#include <unordered_set>
 #include <algorithm>
  
 const unsigned int BUFLEN =  1028;  //Max length of buffer
@@ -50,8 +49,7 @@ int main(void)
      
 	uint32_t last_counter = 0;
 	bool get_first = false;
-	std::vector<uint32_t> absent;
-	std::list<uint32_t> wait;
+	std::unordered_set<uint32_t> wait;
     while(1)
 	{
 
@@ -74,35 +72,26 @@ int main(void)
 	  {
 		if(counter - last_counter > 1)
 		{
+		  uint32_t out_buf[2];
+		  out_buf[0] = ntohl(last_counter + 1);
+		  out_buf[1] = ntohl(counter);
+		  if (sendto(s,  out_buf, sizeof(uint32_t)*2 , 0, (struct sockaddr*) &si_other, slen) == -1)
+		  {
+			std::cout<<"Send error"<<std::endl;
+			continue;
+		  }
 		  for(uint32_t i = last_counter + 1; i < counter; i++)
 		  {
-			std::cout<<"Skipped: "<<i<<std::endl;
-			absent.push_back(i);
-			wait.push_back(i);
+			  std::cout<<"Skipped: "<<i<<std::endl;
+			  wait.insert(i);
 		  } 
 		}
 		last_counter = counter;
 	  }
 	  else
 	  {
+		std::cout<<"Get losted packet: "<<*res<<std::endl;
 		wait.erase(res);
-	  }
-
-	  if (!absent.empty())
-	  {
-		uint32_t out_buf[256];
-		std::cout<<"Absent size: "<<absent.size()<<std::endl;
-		for(int i=0; i<absent.size(); i++)
-		{
-			//std::cout<<"Rerquired: "<<absent[i]<<std::endl;
-		    out_buf[i] = ntohl(absent[i]);
-		}
-		if (sendto(s,  out_buf, sizeof(uint32_t)*absent.size() , 0, (struct sockaddr*) &si_other, slen) == -1)
-		{
-			std::cout<<"Send error"<<std::endl;
-			continue;
-		}
-		absent.clear();
 	  }
 	}
 	close(s);

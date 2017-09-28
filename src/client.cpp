@@ -26,46 +26,13 @@ const unsigned int PORT = 8888;   //The port on which to listen for incoming dat
 const unsigned int CACHE_SIZE = 1024;  
 
 
-class Container 
-{
-     std::mutex _lock;
-     std::list<uint32_t> _elements;
-public:
-     void push(uint32_t element)
-	 {
-	   _lock.lock();
-	   _elements.push_back(element);
-	   _lock.unlock();
-	 }
-
-     uint32_t pop()
-	 {
-	   uint32_t e;
-	   _lock.lock();
-	   e = _elements.front();
-	   _elements.pop_front();
-	   _lock.unlock();
-	   return e;
-	 }
-
-	 bool empty()
-	 {
-	   return _elements.empty();
-	 }
-
-	 size_t size()
-	 {
-	   return _elements.size();
-	 }
-};
-
-
 void die(const char *s)
 {
     perror(s);
     exit(1);
 }
- 
+
+
 int prepare_socket()
 {
     int s; 
@@ -84,6 +51,48 @@ int prepare_socket()
 }
 
 
+class Container 
+{
+     std::mutex _lock;
+     std::list<uint32_t> _elements;
+public:
+     void push(uint32_t start, uint32_t end)
+	 {
+	   _lock.lock();
+	   for(uint32_t i = start; i < end; i++)
+	   {
+		 _elements.push_back(i);
+	   }
+	   _lock.unlock();
+	 }
+
+     uint32_t pop()
+	 {
+	   uint32_t e;
+	   _lock.lock();
+	   e = _elements.front();
+	   _elements.pop_front();
+	   _lock.unlock();
+	   return e;
+	 }
+
+	 bool empty()
+	 {
+	   _lock.lock();
+	   bool is_empty = _elements.empty();
+	   _lock.unlock();
+	   return is_empty;
+	 }
+
+	 size_t size()
+	 {
+	   _lock.lock();
+	   size_t size = _elements.size();
+	   _lock.unlock();
+	   return size;
+	 }
+};
+
 class SkipCheck
 {
   std::random_device random_device; // Источник энтропии.
@@ -97,7 +106,8 @@ class SkipCheck
 
 	bool skip()
 	{
-	  return (distribution(generator) == 2);
+	  //std::cout<<"Random "<<distribution(generator)<<std::endl; 
+	  return (distribution(generator) == 0);
 	}
 };
 
@@ -145,18 +155,47 @@ class Cache
 	}
 };
 
-Container skipped;
 
-void send_stream(int s)
+class Producer
+{
+  std::ifstream fin;
+  std::chrono::microseconds w;
+  public:
+	Producer(): 
+	  fin("/dev/urandom", std::ios::in | std::ios::binary),
+	  w(1)
+	{
+	  if(! fin)
+	  {
+		die("Producer()");
+	  }
+	}
+
+	~Producer()
+	{
+	  fin.close();
+	}
+
+	void read(char* buf)
+	{
+	  //std::this_thread::sleep_for(w);
+	  fin.read(buf, BUFLEN - sizeof(uint32_t));
+	}
+};
+
+
+
+void send_stream(int s, Container& skipped)
 {
   struct sockaddr_in si_other;
   socklen_t slen = sizeof(si_other);
   char buf[BUFLEN];
-  char filebuf[BUFLEN - 4];
+  char filebuf[BUFLEN - sizeof(uint32_t)];
   uint32_t counter = 0;
   uint32_t last_counter = 0;
   SkipCheck checker;
   Cache cache;
+  Producer producer;
 
   memset((char *) &si_other, 0, sizeof(si_other));
   si_other.sin_family = AF_INET;
@@ -168,37 +207,34 @@ void send_stream(int s)
 	exit(1);
   }
   auto start = std::chrono::steady_clock::now();
-  std::ifstream fin("/dev/urandom", std::ios::in | std::ios::binary);
-  if(! fin)
-  {
-	die("random()");
-  }
   while(1)
   {
 	//std::cout<<"Size: "<<skipped.size()<<std::endl;
 	if(skipped.empty())
 	{
-	  fin.read(filebuf, BUFLEN - 4);
+	  producer.read(filebuf);
 	  uint32_t packet = htonl(counter);
 	  std::memcpy(buf, &packet, sizeof(packet));
-	  std::memcpy(buf + sizeof(packet), filebuf, BUFLEN - 4);
-	  //std::chrono::microseconds w( 1 );
-	  //std::this_thread::sleep_for( w );
-	  //if(!checker.skip())
+	  std::memcpy(buf + sizeof(packet), filebuf, BUFLEN - sizeof(packet));
+	  if(!checker.skip())
 	  {
-		std::cout<<"Send: "<<counter<<std::endl;
+		//std::cout<<"+Send: "<<counter<<std::endl;
 		if (sendto(s, buf, BUFLEN, 0 , (struct sockaddr *) &si_other, slen)==-1)
 		{
 		  die("sendto()");
 		}
 	  }
+	  //else
+	  //{
+		//std::cout<<"-Skip: "<<counter<<std::endl;
+	  //}
 	  cache.add(counter, buf);
 	  counter++;
 	}
 	else
 	{
 	  uint32_t e = skipped.pop();
-	  std::cout<<"Resend: "<<e<<std::endl;
+	  //std::cout<<"Resend: "<<e<<std::endl;
 	  cache.get(e, buf);
 	  //std::cout<<"From buf: "<<ntohl(reinterpret_cast<uint32_t&>(*buf)) <<std::endl;
 	  if (sendto(s, buf, BUFLEN, 0 , (struct sockaddr *) &si_other, slen)==-1)
@@ -218,30 +254,35 @@ void send_stream(int s)
   }
 }
 
-void read_stream(int s)
+void read_stream(int s, Container& skipped)
 {
   while(1)
   {
-	uint32_t buf[256];
+	uint32_t buf[2];
 	auto recieved = recvfrom(s, buf, sizeof(buf), 0, nullptr, 0);
 	if (recieved == -1)
 	{
 	  std::cout<<"Recieve error"<<std::endl;
 	  continue;
 	}
-	for(int i = 0; i<recieved/sizeof(uint32_t); i++)
+	if (recieved == sizeof(uint32_t) * 2)
 	{
-	  uint32_t required = ntohl(buf[i]);
-	  skipped.push(required);
+	  skipped.push(ntohl(buf[0]), ntohl(buf[1]));
+	}
+	else
+	{
+	  std::cout<<"Incorrect data"<<std::endl;
 	}
   }
 }
 
+
 int main(void)
 {
   int s = prepare_socket();
-  std::thread t1(send_stream, s);
-  std::thread t2(read_stream, s);
+  Container skipped;
+  std::thread t1(send_stream, s, std::ref(skipped));
+  std::thread t2(read_stream, s, std::ref(skipped));
   t1.join();
   t2.join();
   return 0;
