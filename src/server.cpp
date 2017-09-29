@@ -38,10 +38,10 @@ void check_missed(uint32_t counter, uint32_t last_counter,
 	                   int socket, sockaddr_in* si_other,
                        Missed& missed_packets)
 {
-  uint32_t out_buf[SEND_BUF_LEN];
   bool has_missed_packets = ((counter - last_counter) > 1);
   if(has_missed_packets)
   {
+	uint32_t out_buf[SEND_BUF_LEN];
 	out_buf[0] = ntohl(last_counter + 1);
 	out_buf[1] = ntohl(counter);
 	if (sendto(socket, out_buf, sizeof(out_buf), 0, (sockaddr*) si_other, SLEN) == SOCKET_ERROR)
@@ -88,6 +88,7 @@ void check_options(unsigned int port)
 	die("Incorrect port");
   }
 }
+
 
 bool is_good_packet(size_t length)
 {
@@ -166,8 +167,7 @@ int main(int argc, char *argv[])
 	}
 	counter = ntohl(reinterpret_cast<uint32_t&>(buf));
 
-	auto missed = std::find(missed_packets.begin(), missed_packets.end(), counter);
-	bool new_packet = (missed == missed_packets.end());
+	bool new_packet = (counter > last_counter);
 	if(new_packet)
 	{
 	  check_missed(counter, last_counter, socket, &si_other, missed_packets);
@@ -175,8 +175,13 @@ int main(int argc, char *argv[])
 	}
 	else
 	{
-	  std::cout<<"Get missed packet: "<<*missed<<std::endl;
-	  missed_packets.erase(missed);
+	  auto missed = std::find(missed_packets.begin(), missed_packets.end(), counter);
+	  bool from_missed = (missed != missed_packets.end());
+	  if(from_missed)
+	  {
+		std::cout<<"Get missed packet: "<<*missed<<std::endl;
+		missed_packets.erase(missed);
+	  }
 	}
   }
   return 0;

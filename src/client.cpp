@@ -272,6 +272,7 @@ void send_thread(int socket, std::string& server_ip, int port,
   }
 }
 
+
 void read_thread(int socket, Container& skipped)
 {
   uint32_t buf[RECV_BUF_LEN];
@@ -287,6 +288,7 @@ void read_thread(int socket, Container& skipped)
   }
 }
 
+
 void check_port(unsigned int port)
 {
   if(port < MIN_PORT)
@@ -294,6 +296,7 @@ void check_port(unsigned int port)
 	die("Incorrect port");
   }
 }
+
 
 int main(int argc, char *argv[])
 {
